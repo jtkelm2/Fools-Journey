@@ -1,17 +1,25 @@
+---------------------------------------------------------------
+-- CONSTANTS & CONFIGURATION
+---------------------------------------------------------------
+
+-- Colors
 local CYAN = Color(77/255, 172/255, 219/255)
 local RED = Color(222/255, 72/255, 64/255)
 local GREEN = Color(160/255, 224/255, 150/255)
 local PURPLE = Color(83/255, 54/255, 133/255)
 local YELLOW = Color(214/255, 195/255, 49/255)
 
+-- Player Indices
+local R = 1
+local B = 2
+
+-- GUI Object IDs
 local REFRESH_BUTTON = "b93b10"
 local MANIPULATE_BUTTON = "dd467f"
 local RUN_BUTTON = {"6b7538","da8a3a"}
 local CONFIRM_BUTTON = {"88fdc8","d39970"}
 
-local R = 1
-local B = 2
-
+-- Zone IDs
 local DECK = {"7252cd","33ebb4"}
 local REFRESH = {"99fcf1","dff599"}
 local DISCARD = {"a9f9a1","dd5372"}
@@ -21,19 +29,35 @@ local MISC_SLOT = {{"e4cd71","254ac7","ca7b5e","8771a2"},{"037e0d","9f3b44","15a
 local EQUIPMENT_SLOT = {{"4b9aab","a9d81a"},{"f24971","1d6ff8"}}
 local WEAPON = {"88ba3b","502518"}
 local KILL_SLOT = {"a3159f","f90292"}
+
+-- Counter IDs
 local HP_COUNTER = {"66d824","2b0791"}
 local ATK_COUNTER = {"fbcd06",""}
 
+-- Special Card IDs
 local GUARDBAG = "63b0e8"
-
 local WITNESS_CARDS = {"07cba6","2892ae"}
 
+---------------------------------------------------------------
+-- GAME STATE
+---------------------------------------------------------------
+
 local ready = {false, false}
+
+---------------------------------------------------------------
+-- INITIALIZATION
+---------------------------------------------------------------
 
 function onLoad()
     showRefreshButton()
 end
 
+function onUpdate()
+    -- Empty update function
+end
+
+---------------------------------------------------------------
+-- REFRESH PHASE
 ---------------------------------------------------------------
 
 function refreshButtonClicked(clicked_object, player_color, rightClick)
@@ -66,9 +90,9 @@ function updateRefreshButton()
     end
 end
 
-function showManipulateButton()
-    local manipulateButton = getObjectFromGUID(MANIPULATE_BUTTON)
-    makeButton(manipulateButton,PURPLE,'Manipulate','manipulateButtonClicked')
+function showRefreshButton()
+    local refreshButton = getObjectFromGUID(REFRESH_BUTTON)
+    makeButton(refreshButton,CYAN,'Refresh','refreshButtonClicked')
 end
 
 function refresh(color)
@@ -81,22 +105,6 @@ function refresh(color)
         dealHand(color)
         dealManipulation(color)
     end, 3.5)
-end
-
-function deactivateRunButton(color)
-    local runButton = getObjectFromGUID(RUN_BUTTON[color])
-    runButton.clearButtons()
-end
-
-function checkEmpress(color)
-    local hpCounter = getObjectFromGUID(HP_COUNTER[color])
-    
-    local eqZones = {getObjectFromGUID(EQUIPMENT_SLOT[color][1]), getObjectFromGUID(EQUIPMENT_SLOT[color][2])}
-    local foundEmpress = checkZonesForTag(eqZones,"Empress")
-    
-    if foundEmpress and hpCounter.Counter.getValue() < 20 then
-        hpCounter.Counter.increment()
-    end
 end
 
 function shuffleRefreshPile(color)
@@ -126,19 +134,6 @@ function dealActions(color,excepting)
             dealZoneToZone(deckZone,emptySlots[i],true)
         end, i * 0.2)
     end
-end
-
-function countEmptyActionSlots(color)
-    local emptySlots = 0
-
-    for i = 1, 4 do
-        local slotZone = getObjectFromGUID(ACTION_SLOT[color][i])
-        local slotObj = getFromZone(slotZone)
-        
-        if not slotObj then emptySlots = emptySlots + 1 end
-    end
-    
-    return emptySlots
 end
 
 function dealHand(color)
@@ -174,7 +169,9 @@ function dealManipulation(color)
     end
 end
 
---------------------------------------------------------------------------
+---------------------------------------------------------------
+-- MANIPULATE PHASE
+---------------------------------------------------------------
 
 function manipulateButtonClicked(clicked_object, player_color, rightClick)
     local color = (player_color == "Red") and R or B
@@ -205,9 +202,9 @@ function updateManipulateButton()
     end
 end
 
-function showRefreshButton()
-    local refreshButton = getObjectFromGUID(REFRESH_BUTTON)
-    makeButton(refreshButton,CYAN,'Refresh','refreshButtonClicked')
+function showManipulateButton()
+    local manipulateButton = getObjectFromGUID(MANIPULATE_BUTTON)
+    makeButton(manipulateButton,PURPLE,'Manipulate','manipulateButtonClicked')
 end
 
 function manipulate(color)
@@ -218,11 +215,6 @@ function manipulate(color)
         mixAndSendManipulationCards(color)
         Wait.time(function() activateRunButton(color) end, 3)
     end,1.7)
-end
-
-function activateRunButton(color)
-    local runButton = getObjectFromGUID(RUN_BUTTON[color])
-    makeButton(runButton,RED,'Run','runButtonClicked')
 end
 
 function flipManipulationCards(color)
@@ -269,23 +261,25 @@ function mixAndSendManipulationCards(color)
     end, 2.1)
 end
 
-function getFlippedEquipment(color)
-    for i = 1, 2 do
-        local equipmentZone = getObjectFromGUID(EQUIPMENT_SLOT[color][i])
-        local equipment = getFromZone(equipmentZone)
-        if equipment and isFlipped(equipment) then
-            return equipment
-        end
-    end
-end
-
-------------------------------------------------------------------------------
+---------------------------------------------------------------
+-- RUN PHASE
+---------------------------------------------------------------
 
 function runButtonClicked(clicked_object, player_color)
     clicked_object.clearButtons()
     local color = (player_color == "Red") and R or B
     run(color)
     prepRun(other(color))
+end
+
+function activateRunButton(color)
+    local runButton = getObjectFromGUID(RUN_BUTTON[color])
+    makeButton(runButton,RED,'Run','runButtonClicked')
+end
+
+function deactivateRunButton(color)
+    local runButton = getObjectFromGUID(RUN_BUTTON[color])
+    runButton.clearButtons()
 end
 
 function run(color)
@@ -390,26 +384,114 @@ function mixAndSendMiscCards(color)
     end, 2.1)
 end
 
-------------------------------------------------------------------------------
+---------------------------------------------------------------
+-- SPECIAL CARD MECHANICS
+---------------------------------------------------------------
 
-function makeButton(obj,color,label,func)
-    obj.createButton(
-        {click_function = func,
-        label = label,
-        width = 5500, height = 1700, font_size = 1200,
-        color = color,
-        position = {0, 1, 0}})
-    obj.setColorTint({0,0,0,0})
-    obj.locked = true
+-- Equipment Effects
+function checkEmpress(color)
+    local hpCounter = getObjectFromGUID(HP_COUNTER[color])
+    
+    local eqZones = {getObjectFromGUID(EQUIPMENT_SLOT[color][1]), getObjectFromGUID(EQUIPMENT_SLOT[color][2])}
+    local foundEmpress = checkZonesForTag(eqZones,"Empress")
+    
+    if foundEmpress and hpCounter.Counter.getValue() < 20 then
+        hpCounter.Counter.increment()
+    end
 end
 
-function getFromZone(zone)
-    for _, obj in ipairs(zone.getObjects()) do
-        if obj.type == "Card" or obj.type == "Deck" then
-            return obj
+function getFlippedEquipment(color)
+    for i = 1, 2 do
+        local equipmentZone = getObjectFromGUID(EQUIPMENT_SLOT[color][i])
+        local equipment = getFromZone(equipmentZone)
+        if equipment and isFlipped(equipment) then
+            return equipment
         end
     end
 end
+
+-- Elusive Cards
+function returnElusivesFromHand(color)
+    local playerColor = (color == R) and "Red" or "Blue"
+    for _, card in ipairs(Player[playerColor].getHandObjects()) do
+        if card.hasTag("Elusive") then
+            card.flip()
+            Wait.time(function() refreshCard(card,other(color)) end, 0.5)
+        end
+    end
+end
+
+function returnElusivesFromActions(color)
+    for i = 1, 4 do
+        local actionSlot = getObjectFromGUID(ACTION_SLOT[color][i])
+        local card = getFromZone(actionSlot)
+        if card and card.hasTag("Elusive") then
+            card.flip()
+            refreshCardSmooth(card,color)
+        end
+    end
+end
+
+-- Guards & Witness Cards
+function disarm(color)
+    local weaponSlot = getObjectFromGUID(WEAPON[color])
+    local killSlot = getObjectFromGUID(KILL_SLOT[color])
+
+    discardZone(weaponSlot,color)
+    discardZone(killSlot,color)
+end
+
+function callGuardsOn(color)
+    disarm(color)
+
+    local guardBag = getObjectFromGUID(GUARDBAG)
+    for i = 1, 4 do
+        local actionSlot = getObjectFromGUID(ACTION_SLOT[color][i])
+        Wait.time(function()
+            local guard = guardBag.takeObject()
+            guard.setPositionSmooth(actionSlot.getPosition())
+        end, 0.3*i)
+    end
+end
+
+function addCallYourShotContext()
+    for _, cardId in ipairs(WITNESS_CARDS) do
+        local card = getObjectFromGUID(cardId)
+        if card then
+            card.clearContextMenu()
+            card.addContextMenuItem("Call your shot!", function(player_color)
+                local color = (player_color == "Red") and R or B
+                discardCardSmooth(card,color)
+                callGuardsOn(other(color)) end)
+        end
+    end
+end
+
+---------------------------------------------------------------
+-- CARD CONTEXT MENUS
+---------------------------------------------------------------
+
+function addDiscardContext(card)
+    card.addContextMenuItem("Send to discard", function(player_color)
+        local color = (player_color == "Red") and R or B
+        local discardZone = getObjectFromGUID(DISCARD[other(color)])
+        card.flip()
+        Wait.time(function() card.setPosition(discardZone.getPosition()) end, 0.5)
+    end)
+end
+
+function addRefreshContext(card)
+    card.addContextMenuItem("Send to refresh", function(player_color)
+        local color = (player_color == "Red") and R or B
+        local refreshZone = getObjectFromGUID(REFRESH[other(color)])
+        card.flip()
+        Wait.time(function() card.setPosition(refreshZone.getPosition()) end, 0.5)
+    end)
+end
+
+---------------------------------------------------------------
+-- ZONE MANAGEMENT
+---------------------------------------------------------------
 
 function moveZoneToZone(zoneA,zoneB)
     local obj = getFromZone(zoneA)
@@ -438,68 +520,7 @@ function shuffleZone(zone)
     obj.shuffle()
 end
 
-function checkZoneForTag(zone,tag)
-    local obj = getFromZone(zone)
-    if not obj then return false end
-    
-    return obj.hasTag(tag)
-end
-
-function checkZonesForTag(zones,tag)
-    for _, zone in ipairs(zones) do
-        if checkZoneForTag(zone,tag) then
-            return true
-        end
-    end
-    return false
-end
-
-function isFlipped(card)
-    local rot = card.getRotation()
-    return rot[3] > 90 and rot[3] < 270
-end
-
-function other(color)
-    return 3-color
-end
-
-function onUpdate()
-end
-
------------------------------------------------------
-
-function disarm(color)
-    local weaponSlot = getObjectFromGUID(WEAPON[color])
-    local killSlot = getObjectFromGUID(KILL_SLOT[color])
-
-    discardZone(weaponSlot,color)
-    discardZone(killSlot,color)
-end
-
-function callGuardsOn(color)
-    disarm(color)
-
-    local guardBag = getObjectFromGUID(GUARDBAG)
-    for i = 1, 4 do
-        local actionSlot = getObjectFromGUID(ACTION_SLOT[color][i])
-        Wait.time(function()
-            local guard = guardBag.takeObject()
-            guard.setPositionSmooth(actionSlot.getPosition())
-        end, 0.3*i)
-    end
-end
-
------------------------------------------------------
-
-function addDiscardContext(card)
-    card.addContextMenuItem("Send to discard", function(player_color)
-        local color = (player_color == "Red") and R or B
-        local discardZone = getObjectFromGUID(DISCARD[other(color)])
-        card.flip()
-        Wait.time(function() card.setPosition(discardZone.getPosition()) end, 0.5)
-    end)
-end
-
+-- Discard Zone Operations
 function discardCard(card,color)
     local discardZone = getObjectFromGUID(DISCARD[color])
     card.setPosition(discardZone.getPosition())
@@ -516,15 +537,7 @@ function discardZone(zone,color)
     if obj then obj.setPositionSmooth(discard.getPosition()) end
 end
 
-function addRefreshContext(card)
-    card.addContextMenuItem("Send to refresh", function(player_color)
-        local color = (player_color == "Red") and R or B
-        local refreshZone = getObjectFromGUID(REFRESH[other(color)])
-        card.flip()
-        Wait.time(function() card.setPosition(refreshZone.getPosition()) end, 0.5)
-    end)
-end
-
+-- Refresh Zone Operations
 function refreshCard(card,color)
     local refreshZone = getObjectFromGUID(REFRESH[color])
     card.setPosition(refreshZone.getPosition())
@@ -535,87 +548,118 @@ function refreshCardSmooth(card,color)
     card.setPositionSmooth(refreshZone.getPosition())
 end
 
-function addCallYourShotContext()
-    for _, cardId in ipairs(WITNESS_CARDS) do
-        local card = getObjectFromGUID(cardId)
-        if card then
-            card.clearContextMenu()
-            card.addContextMenuItem("Call your shot!", function(player_color)
-                local color = (player_color == "Red") and R or B
-                discardCardSmooth(card,color)
-                callGuardsOn(other(color)) end)
+---------------------------------------------------------------
+-- UI HELPERS
+---------------------------------------------------------------
+
+function makeButton(obj,color,label,func)
+    obj.createButton(
+        {click_function = func,
+        label = label,
+        width = 5500, height = 1700, font_size = 1200,
+        color = color,
+        position = {0, 1, 0}})
+    obj.setColorTint({0,0,0,0})
+    obj.locked = true
+end
+
+---------------------------------------------------------------
+-- UTILITY FUNCTIONS
+---------------------------------------------------------------
+
+function getFromZone(zone)
+    for _, obj in ipairs(zone.getObjects()) do
+        if obj.type == "Card" or obj.type == "Deck" then
+            return obj
         end
     end
 end
 
------------------------------------------------------
-
-function returnElusivesFromHand(color)
-    local playerColor = (color == R) and "Red" or "Blue"
-    for _, card in ipairs(Player[playerColor].getHandObjects()) do
-        if card.hasTag("Elusive") then
-            card.flip()
-            Wait.time(function() refreshCard(card,other(color)) end, 0.5)
-        end
-    end
+function checkZoneForTag(zone,tag)
+    local obj = getFromZone(zone)
+    if not obj then return false end
+    
+    return obj.hasTag(tag)
 end
 
-function returnElusivesFromActions(color)
+function checkZonesForTag(zones,tag)
+    for _, zone in ipairs(zones) do
+        if checkZoneForTag(zone,tag) then
+            return true
+        end
+    end
+    return false
+end
+
+function countEmptyActionSlots(color)
+    local emptySlots = 0
+
     for i = 1, 4 do
-        local actionSlot = getObjectFromGUID(ACTION_SLOT[color][i])
-        local card = getFromZone(actionSlot)
-        if card and card.hasTag("Elusive") then
-            card.flip()
-            refreshCardSmooth(card,color)
-        end
+        local slotZone = getObjectFromGUID(ACTION_SLOT[color][i])
+        local slotObj = getFromZone(slotZone)
+        
+        if not slotObj then emptySlots = emptySlots + 1 end
     end
+    
+    return emptySlots
 end
 
-------------------------------------------------------
+function isFlipped(card)
+    local rot = card.getRotation()
+    return rot[3] > 90 and rot[3] < 270
+end
+
+function other(color)
+    return 3-color
+end
+
+---------------------------------------------------------------
+-- CARD DATA
+---------------------------------------------------------------
 
 local cardData = {
-      ["1 of Wands"] = {
+    ["1 of Wands"] = {
         class = "Weapon",
         val = 1
-      },
-      ["2 of Wands"] = {
+    },
+    ["2 of Wands"] = {
         class = "Weapon",
         val = 2
-      },
-      ["3 of Wands"] = {
+    },
+    ["3 of Wands"] = {
         class = "Weapon",
         val = 3
-      },
-      ["4 of Wands"] = {
+    },
+    ["4 of Wands"] = {
         class = "Weapon",
         val = 4
-      },
-      ["5 of Wands"] = {
+    },
+    ["5 of Wands"] = {
         class = "Weapon",
         val = 5
-      },
-      ["6 of Wands"] = {
+    },
+    ["6 of Wands"] = {
         class = "Weapon",
         val = 6
-      },
-      ["7 of Wands"] = {
+    },
+    ["7 of Wands"] = {
         class = "Weapon",
         val = 7
-      },
-      ["8 of Wands"] = {
+    },
+    ["8 of Wands"] = {
         class = "Weapon",
         val = 8
-      },
-      ["9 of Wands"] = {
+    },
+    ["9 of Wands"] = {
         class = "Weapon",
         val = 9
-      },
-      ["10 of Wands"] = {
+    },
+    ["10 of Wands"] = {
         class = "Weapon",
         val = 10
-      },
-      ["Strength"] = {
+    },
+    ["Strength"] = {
         class = "Weapon",
         val = 8
-      }
     }
+}
