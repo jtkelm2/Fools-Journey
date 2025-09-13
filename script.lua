@@ -38,11 +38,112 @@ local ATK_COUNTER = {"fbcd06",""}
 local GUARDBAG = "63b0e8"
 local WITNESS_CARDS = {"07cba6","2892ae"}
 
+-- Timing Constants
+local CARD_MOVE_DELAY = 1.8
+local CARD_TELE_DELAY = 1.0
+local CARD_FLIP_DELAY = 0.5
+local SHUFFLE_DELAY = 0.3
+local DEAL_SEQUENCE_DELAY = 0.1
+
 ---------------------------------------------------------------
 -- GAME STATE
 ---------------------------------------------------------------
 
 local ready = {false, false}
+
+---------------------------------------------------------------
+-- CALLBACK SYSTEM
+---------------------------------------------------------------
+
+local Chain = {}
+Chain.__index = Chain
+
+function Chain:new()
+    local instance = {
+        steps = {},
+        onComplete = nil
+    }
+    setmetatable(instance, self)
+    return instance
+end
+
+function Chain:next(func)
+    table.insert(self.steps, {
+        type = "sequential",
+        func = func
+    })
+    return self
+end
+
+function Chain:parallel(funcs, delay)
+    table.insert(self.steps, {
+        type = "parallel",
+        funcs = funcs,
+        delay = delay or 0
+    })
+    return self
+end
+
+function Chain:wait(delay)
+    table.insert(self.steps, {
+        type = "wait",
+        delay = delay
+    })
+    return self
+end
+
+function Chain:complete(callback)
+    self.onComplete = callback
+    return self
+end
+
+function Chain:run()
+    self:_executeStep(1)
+end
+
+function Chain:_executeStep(index)
+    if index > #self.steps then
+        if self.onComplete then
+            self.onComplete()
+        end
+        return
+    end
+    
+    local step = self.steps[index]
+    
+    if step.type == "sequential" then
+        step.func(function() self:_executeStep(index + 1) end)
+    elseif step.type == "parallel" then
+        local completed = 0
+        local total = #step.funcs
+
+        if total == 0 then
+            self:_executeStep(index + 1)
+            return
+        end
+        
+        local checkComplete = function()
+            completed = completed + 1
+            if completed >= total then
+                self:_executeStep(index + 1)
+            end
+        end
+        
+        for i, func in ipairs(step.funcs) do
+            Wait.time(function()
+                func(checkComplete)
+            end, step.delay * (i - 1))
+        end
+    elseif step.type == "wait" then
+        Wait.time(function()
+            self:_executeStep(index + 1)
+        end, step.delay)
+    end
+end
+
+function chain()
+    return Chain:new()
+end
 
 ---------------------------------------------------------------
 -- INITIALIZATION
@@ -53,11 +154,98 @@ function onLoad()
 end
 
 function onUpdate()
-    -- Empty update function
 end
 
 ---------------------------------------------------------------
--- REFRESH PHASE
+-- ASYNC HELPER FUNCTIONS
+---------------------------------------------------------------
+
+function moveZoneToZoneAsync(zoneA, zoneB, callback)
+    local obj = getFromZone(zoneA)
+    if not obj then
+        if callback then callback() end
+        return
+    end
+    
+    obj.setPositionSmooth(zoneB.getPosition())
+    Wait.time(callback or function() end, CARD_MOVE_DELAY)
+end
+
+function dealZoneToZoneAsync(zoneA, zoneB, flip, callback)
+    local obj = getFromZone(zoneA)
+    if not obj then
+        if callback then callback() end
+        return
+    end
+    
+    local card
+    if obj.type == "Card" then card = obj end
+    if obj.type == "Deck" then card = obj.takeObject() end
+    
+    if flip then card.flip() end
+    card.setPositionSmooth(zoneB.getPosition())
+    Wait.time(callback or function() end, CARD_MOVE_DELAY)
+end
+
+function shuffleZoneAsync(zone, callback)
+    local obj = getFromZone(zone)
+    if not obj then
+        if callback then callback() end
+        return
+    end
+    
+    obj.shuffle()
+    Wait.time(callback or function() end, SHUFFLE_DELAY)
+end
+
+function discardCardSmoothAsync(card, color, callback)
+    local discardZone = getObjectFromGUID(DISCARD[color])
+    card.setPositionSmooth(discardZone.getPosition())
+    Wait.time(callback or function() end, CARD_MOVE_DELAY)
+end
+
+function refreshCardSmoothAsync(card, color, callback)
+    local refreshZone = getObjectFromGUID(REFRESH[color])
+    card.setPositionSmooth(refreshZone.getPosition())
+    Wait.time(callback or function() end, CARD_MOVE_DELAY)
+end
+
+function flipCardAsync(card, callback)
+    card.flip()
+    Wait.time(callback or function() end, CARD_FLIP_DELAY)
+end
+
+function discardZoneAsync(zone, color, callback)
+    local discard = getObjectFromGUID(DISCARD[color])
+    local obj = getFromZone(zone)
+    if obj then 
+        obj.setPositionSmooth(discard.getPosition())
+        Wait.time(callback or function() end, CARD_MOVE_DELAY)
+    else
+        if callback then callback() end
+    end
+end
+
+function dealFromGuardBagAsync(guardBag, targetZone, callback)
+    local guard = guardBag.takeObject()
+    guard.setPositionSmooth(targetZone.getPosition())
+    Wait.time(callback or function() end, CARD_MOVE_DELAY)
+end
+
+function refreshCardAsync(card, color, callback)
+    local refreshZone = getObjectFromGUID(REFRESH[color])
+    card.setPosition(refreshZone.getPosition())
+    Wait.time(callback or function() end, CARD_TELE_DELAY)
+end
+
+function refreshCardSmoothAsync(card, color, callback)
+    local refreshZone = getObjectFromGUID(REFRESH[color])
+    card.setPositionSmooth(refreshZone.getPosition())
+    Wait.time(callback or function() end, CARD_MOVE_DELAY)
+end
+
+---------------------------------------------------------------
+-- REFRESH PHASE (Game Logic Layer)
 ---------------------------------------------------------------
 
 function refreshButtonClicked(clicked_object, player_color, rightClick)
@@ -83,39 +271,54 @@ function updateRefreshButton()
     if ready[R] and ready[B] then
         ready = {false, false}
         refreshButton.clearButtons()
-        refresh(R)
-        refresh(B)
-        addCallYourShotContext()
-        Wait.time(function() showManipulateButton() end, 3)
+        
+        chain()
+            :parallel({
+                function(done) refresh(R, done) end,
+                function(done) refresh(B, done) end
+            })
+            :next(function(done) 
+                addCallYourShotContext()
+                done()
+            end)
+            :next(function(done) showManipulateButton() end)
+            :run()
     end
 end
 
 function showRefreshButton()
     local refreshButton = getObjectFromGUID(REFRESH_BUTTON)
-    makeButton(refreshButton,CYAN,'Refresh','refreshButtonClicked')
+    makeButton(refreshButton, CYAN, 'Refresh', 'refreshButtonClicked')
 end
 
-function refresh(color)
+function refresh(color, callback)
     deactivateRunButton(color)
     checkEmpress(color)
-    returnElusivesFromActions(color)
-    Wait.time(function() shuffleRefreshPile(color) end, 1.5)
-    Wait.time(function()
-        dealActions(color,1)
-        dealHand(color)
-        dealManipulation(color)
-    end, 3.5)
+
+    chain()
+        :next(function(done) returnElusivesFromActions(color, done) end)
+        :next(function(done) shuffleRefreshPile(color, done) end)
+        :parallel({
+            function(done) dealActions(color, 1, done) end,
+            function(done) dealHand(other(color), done) end,
+            function(done) dealManipulation(other(color), done) end
+        })
+        :complete(callback)
+        :run()
 end
 
-function shuffleRefreshPile(color)
+function shuffleRefreshPile(color, callback)
     local refreshZone = getObjectFromGUID(REFRESH[color])
     local deckZone = getObjectFromGUID(DECK[color])
     
-    moveZoneToZone(refreshZone,deckZone)
-    Wait.time(function() shuffleZone(deckZone) end,1.5)
+    chain()
+        :next(function(done) moveZoneToZoneAsync(refreshZone, deckZone, done) end)
+        :next(function(done) shuffleZoneAsync(deckZone, done) end)
+        :complete(callback)
+        :run()
 end
 
-function dealActions(color,excepting)
+function dealActions(color, excepting, callback)
     local deckZone = getObjectFromGUID(DECK[color])
     
     local emptySlots = {}
@@ -129,14 +332,25 @@ function dealActions(color,excepting)
     local numEmpty = #emptySlots
     local cardsToDeal = math.max(0, numEmpty - excepting)
     
-    for i = 1, cardsToDeal do
-        Wait.time(function()
-            dealZoneToZone(deckZone,emptySlots[i],true)
-        end, i * 0.2)
+    if cardsToDeal == 0 then
+        if callback then callback() end
+        return
     end
+    
+    local dealFunctions = {}
+    for i = 1, cardsToDeal do
+        table.insert(dealFunctions, function(done)
+            dealZoneToZoneAsync(deckZone, emptySlots[i], true, done)
+        end)
+    end
+    
+    chain()
+        :parallel(dealFunctions, DEAL_SEQUENCE_DELAY)
+        :complete(callback)
+        :run()
 end
 
-function dealHand(color)
+function dealHand(color, callback)
     local deckZone = getObjectFromGUID(DECK[other(color)])
     local deck = getFromZone(deckZone)
     
@@ -149,28 +363,38 @@ function dealHand(color)
         deck.deal(cardsToDraw, playerColor)
     end
 
-    Wait.time(function()
+    chain()
+        :next(function(done)
             for _, card in ipairs(Player[playerColor].getHandObjects()) do
                 card.clearContextMenu()
                 addRefreshContext(card)
                 addDiscardContext(card)
             end
-        end, 1)
+            done()
+        end)
+        :complete(callback)
+        :run()
 end
 
-function dealManipulation(color)
+function dealManipulation(color, callback)
     local deckZone = getObjectFromGUID(DECK[other(color)])
     
+    local dealFunctions = {}
     for i = 1, 2 do
         local slotZone = getObjectFromGUID(MANIPULATION_SLOT[color][i])
-        Wait.time(function()
-            dealZoneToZone(deckZone,slotZone,true)
-        end, i * 0.2)
+        table.insert(dealFunctions, function(done)
+            dealZoneToZoneAsync(deckZone, slotZone, true, done)
+        end)
     end
+    
+    chain()
+        :parallel(dealFunctions, DEAL_SEQUENCE_DELAY)
+        :complete(callback)
+        :run()
 end
 
 ---------------------------------------------------------------
--- MANIPULATE PHASE
+-- MANIPULATE PHASE (Game Logic Layer)
 ---------------------------------------------------------------
 
 function manipulateButtonClicked(clicked_object, player_color, rightClick)
@@ -196,69 +420,108 @@ function updateManipulateButton()
     if ready[R] and ready[B] then
         ready = {false, false}
         manipulateButton.clearButtons()
-        manipulate(R)
-        manipulate(B)
-        Wait.time(function() showRefreshButton() end, 6)
+        
+        chain()
+            :parallel({
+                function(done) manipulate(R, done) end,
+                function(done) manipulate(B, done) end
+            })
+            :next(function(done) showRefreshButton() end)
+            :run()
     end
 end
 
 function showManipulateButton()
     local manipulateButton = getObjectFromGUID(MANIPULATE_BUTTON)
-    makeButton(manipulateButton,PURPLE,'Manipulate','manipulateButtonClicked')
+    makeButton(manipulateButton, PURPLE, 'Manipulate', 'manipulateButtonClicked')
 end
 
-function manipulate(color)
-    flipManipulationCards(color)
-    sendFourthCard(color)
-    returnElusivesFromHand(color)
-    Wait.time(function()
-        mixAndSendManipulationCards(color)
-        Wait.time(function() activateRunButton(color) end, 3)
-    end,1.7)
+function manipulate(color, callback)
+    chain()
+        :parallel({
+            function(done) flipManipulationCards(color, done) end,
+            function(done) sendFourthCard(color, done) end,
+            function(done) returnElusivesFromHand(color, done) end
+        })
+        :next(function(done) mixAndSendManipulationCards(color, done) end)
+        :next(function(done) 
+            activateRunButton(color)
+            done()
+        end)
+        :complete(callback)
+        :run()
 end
 
-function flipManipulationCards(color)
+function flipManipulationCards(color, callback)
+    local flipFunctions = {}
     for i = 1, 2 do
         local slotZone = getObjectFromGUID(MANIPULATION_SLOT[color][i])
         local card = getFromZone(slotZone)
         if card then
-            Wait.time(function() card.flip() end, 0.3*i)
+            table.insert(flipFunctions, function(done)
+                flipCardAsync(card, done)
+            end)
         end
     end
+    
+    chain()
+        :parallel(flipFunctions, CARD_FLIP_DELAY)
+        :complete(callback)
+        :run()
 end
 
-function sendFourthCard(color)
+function sendFourthCard(color, callback)
     local deckZone = getObjectFromGUID(DECK[other(color)])
     local slotZone = getObjectFromGUID(MANIPULATION_SLOT[color][3])
-    dealZoneToZone(deckZone,slotZone,false)
+    dealZoneToZoneAsync(deckZone, slotZone, false, callback)
 end
 
-function mixAndSendManipulationCards(color)
+function mixAndSendManipulationCards(color, callback)
     local fourthSlotZone = getObjectFromGUID(MANIPULATION_SLOT[color][3])
     local otherRefreshZone = getObjectFromGUID(REFRESH[other(color)])
     local otherDeckZone = getObjectFromGUID(DECK[other(color)])
 
-    for i = 1, 2 do
-        local slotZone = getObjectFromGUID(MANIPULATION_SLOT[color][i])
-        dealZoneToZone(slotZone,fourthSlotZone,false)
-    end
-    
-    Wait.time(function()
-        local equipment = getFlippedEquipment(color)
-        if equipment then
-            discardCardSmooth(equipment,color)
-        else
-            shuffleZone(fourthSlotZone)
-        end
+    chain()
+        :parallel({
+            function(done) 
+                local slotZone = getObjectFromGUID(MANIPULATION_SLOT[color][1])
+                dealZoneToZoneAsync(slotZone, fourthSlotZone, false, done)
+            end,
+            function(done)
+                local slotZone = getObjectFromGUID(MANIPULATION_SLOT[color][2])
+                dealZoneToZoneAsync(slotZone, fourthSlotZone, false, done)
+            end
+        })
+        :next(function(done)
+            local equipment = getFlippedEquipment(color)
+            if equipment then
+                discardCardSmoothAsync(equipment, color, done)
+            else
+                shuffleZoneAsync(fourthSlotZone, done)
+            end
+        end)
+        :next(function(done)
+            local emptyActionSlots = countEmptyActionSlots(other(color))
+            local dealFunctions = {}
+            
+            for j = 1, emptyActionSlots do
+                table.insert(dealFunctions, function(dealDone)
+                    dealZoneToZoneAsync(fourthSlotZone, otherDeckZone, false, dealDone)
+                end)
+            end
+            
+            table.insert(dealFunctions, function(dealDone) moveZoneToZoneAsync(fourthSlotZone, otherRefreshZone, dealDone) end)
 
-        local emptyActionSlots = countEmptyActionSlots(other(color))
-
-        for j = 1, emptyActionSlots do
-            Wait.time(function() dealZoneToZone(fourthSlotZone,otherDeckZone,false) end, 0.1*j)
-        end
-        Wait.time(function() moveZoneToZone(fourthSlotZone,otherRefreshZone) end, 0.6)
-        Wait.time(function() dealActions(other(color),0) end, 2.5)
-    end, 2.1)
+            chain()
+                :parallel(dealFunctions, DEAL_SEQUENCE_DELAY)
+                :next(function(actionDone)
+                    dealActions(other(color), 0, actionDone)
+                end)
+                :complete(done)
+                :run()
+        end)
+        :complete(callback)
+        :run()
 end
 
 ---------------------------------------------------------------
@@ -268,13 +531,18 @@ end
 function runButtonClicked(clicked_object, player_color)
     clicked_object.clearButtons()
     local color = (player_color == "Red") and R or B
-    run(color)
-    prepRun(other(color))
+    
+    chain()
+        :parallel({
+            function(done) run(color, done) end,
+            function(done) prepRun(other(color), done) end
+        })
+        :run()
 end
 
 function activateRunButton(color)
     local runButton = getObjectFromGUID(RUN_BUTTON[color])
-    makeButton(runButton,RED,'Run','runButtonClicked')
+    makeButton(runButton, RED, 'Run', 'runButtonClicked')
 end
 
 function deactivateRunButton(color)
@@ -282,27 +550,39 @@ function deactivateRunButton(color)
     runButton.clearButtons()
 end
 
-function run(color)
+function run(color, callback)
     local refreshZone = getObjectFromGUID(REFRESH[color])
+    local moveFunctions = {}
+    
     for i = 1, 4 do
         local slotZone = getObjectFromGUID(ACTION_SLOT[color][i])
-        Wait.time(function()
-            dealZoneToZone(slotZone,refreshZone,true)
-        end, i * 0.1)
+        table.insert(moveFunctions, function(done)
+            dealZoneToZoneAsync(slotZone, refreshZone, true, done)
+        end)
     end
+    
+    chain()
+        :parallel(moveFunctions, DEAL_SEQUENCE_DELAY)
+        :complete(callback)
+        :run()
 end
 
-function prepRun(color)
+function prepRun(color, callback)
     local deckZone = getObjectFromGUID(DECK[other(color)])
+    local dealFunctions = {}
 
     for i = 1, 4 do
         local slotZone = getObjectFromGUID(MISC_SLOT[color][i])
-        Wait.time(function ()
-            dealZoneToZone(deckZone,slotZone,true)
-        end, i*0.1)
+        table.insert(dealFunctions, function(done)
+            dealZoneToZoneAsync(deckZone, slotZone, true, done)
+        end)
     end
 
-    Wait.time(function() makeRunDecisionButtons(color) end, 1)
+    chain()
+        :parallel(dealFunctions, DEAL_SEQUENCE_DELAY)
+        :next(function(done) makeRunDecisionButtons(color); done() end)
+        :complete(callback)
+        :run()
 end
 
 function makeRunDecisionButtons(color)
@@ -328,21 +608,38 @@ function recycleButtonClicked(clicked_object, player_color)
     local refreshZone = getObjectFromGUID(REFRESH[other(color)])
 
     clicked_object.clearButtons()
-    clicked_object.flip()
-    clicked_object.setPositionSmooth(refreshZone.getPosition())
 
-    Wait.time(function() dealRecycledCards(color) end, 0.5)
+    chain()
+        :next(function(done) clicked_object.flip(); done() end)
+        :next(function(done) clicked_object.setPositionSmooth(refreshZone.getPosition()); done() end)
+        :wait(CARD_FLIP_DELAY)
+        :next(function(done) dealRecycledCards(color, done) end)
+        :run()
 end
 
-function dealRecycledCards(color)
+function dealRecycledCards(color, callback)
     local deckZone = getObjectFromGUID(DECK[other(color)])
+    local dealFunctions = {}
+    
     for i = 1, 4 do
         local slotZone = getObjectFromGUID(MISC_SLOT[color][i])
         local card = getFromZone(slotZone)
         if not card then
-            dealZoneToZone(deckZone,slotZone,false)
+            table.insert(dealFunctions, function(done)
+                dealZoneToZoneAsync(deckZone, slotZone, false, done)
+            end)
         end
     end
+    
+    if #dealFunctions == 0 then
+        if callback then callback() end
+        return
+    end
+    
+    chain()
+        :parallel(dealFunctions)
+        :complete(callback)
+        :run()
 end
 
 function confirmButtonClicked(clicked_object, player_color)
@@ -358,42 +655,63 @@ function confirmButtonClicked(clicked_object, player_color)
         end
     end
 
-    Wait.time(function() mixAndSendMiscCards(color) end, 1)
+    chain()
+        :wait(CARD_FLIP_DELAY)
+        :next(function(done) mixAndSendMiscCards(color, done) end)
+        :run()
 end
 
-function mixAndSendMiscCards(color)
+function mixAndSendMiscCards(color, callback)
     local fourthSlotZone = getObjectFromGUID(MISC_SLOT[color][4])
     local otherRefreshZone = getObjectFromGUID(REFRESH[other(color)])
     local otherDeckZone = getObjectFromGUID(DECK[other(color)])
 
-    for i = 1, 3 do
-        local slotZone = getObjectFromGUID(MISC_SLOT[color][i])
-        dealZoneToZone(slotZone,fourthSlotZone,false)
-    end
-    
-    Wait.time(function()
-        shuffleZone(fourthSlotZone)
-
-        local emptyActionSlots = countEmptyActionSlots(other(color))
-
-        for j = 1, emptyActionSlots do
-            Wait.time(function() dealZoneToZone(fourthSlotZone,otherDeckZone,false) end, 0.1*j)
-        end
-        Wait.time(function() moveZoneToZone(fourthSlotZone,otherRefreshZone) end, 0.6)
-        Wait.time(function() dealActions(other(color),0) end, 2.5)
-    end, 2.1)
+    chain()
+        :parallel({
+            function(done)
+                local slotZone = getObjectFromGUID(MISC_SLOT[color][1])
+                dealZoneToZoneAsync(slotZone, fourthSlotZone, false, done)
+            end,
+            function(done)
+                local slotZone = getObjectFromGUID(MISC_SLOT[color][2])
+                dealZoneToZoneAsync(slotZone, fourthSlotZone, false, done)
+            end,
+            function(done)
+                local slotZone = getObjectFromGUID(MISC_SLOT[color][3])
+                dealZoneToZoneAsync(slotZone, fourthSlotZone, false, done)
+            end
+        })
+        :next(function(done) shuffleZoneAsync(fourthSlotZone, done) end)
+        :next(function(done)
+            local emptyActionSlots = countEmptyActionSlots(other(color))
+            local dealFunctions = {}
+            
+            for j = 1, emptyActionSlots do
+                table.insert(dealFunctions, function(dealDone)
+                    dealZoneToZoneAsync(fourthSlotZone, otherDeckZone, false, dealDone)
+                end)
+            end
+            
+            chain()
+                :parallel(dealFunctions, DEAL_SEQUENCE_DELAY)
+                :next(function(moveDone) moveZoneToZoneAsync(fourthSlotZone, otherRefreshZone, moveDone) end)
+                :next(function(actionDone) dealActions(other(color), 0, actionDone) end)
+                :complete(done)
+                :run()
+        end)
+        :complete(callback)
+        :run()
 end
 
 ---------------------------------------------------------------
 -- SPECIAL CARD MECHANICS
 ---------------------------------------------------------------
 
--- Equipment Effects
 function checkEmpress(color)
     local hpCounter = getObjectFromGUID(HP_COUNTER[color])
     
     local eqZones = {getObjectFromGUID(EQUIPMENT_SLOT[color][1]), getObjectFromGUID(EQUIPMENT_SLOT[color][2])}
-    local foundEmpress = checkZonesForTag(eqZones,"Empress")
+    local foundEmpress = checkZonesForTag(eqZones, "Empress")
     
     if foundEmpress and hpCounter.Counter.getValue() < 20 then
         hpCounter.Counter.increment()
@@ -410,48 +728,79 @@ function getFlippedEquipment(color)
     end
 end
 
--- Elusive Cards
-function returnElusivesFromHand(color)
+function returnElusivesFromHand(color, callback)
     local playerColor = (color == R) and "Red" or "Blue"
+    local elusiveFunctions = {}
+    
     for _, card in ipairs(Player[playerColor].getHandObjects()) do
         if card.hasTag("Elusive") then
-            card.flip()
-            Wait.time(function() refreshCard(card,other(color)) end, 0.5)
+            table.insert(elusiveFunctions, function(done)
+                chain()
+                    :next(function(flipDone) flipCardAsync(card, flipDone) end)
+                    :next(function(refreshDone) refreshCardAsync(card, other(color), refreshDone) end)
+                    :complete(done)
+                    :run()
+            end)
         end
     end
+    
+    chain()
+        :parallel(elusiveFunctions)
+        :complete(callback)
+        :run()
 end
 
-function returnElusivesFromActions(color)
+function returnElusivesFromActions(color, callback)
+    local funcs = {}
     for i = 1, 4 do
         local actionSlot = getObjectFromGUID(ACTION_SLOT[color][i])
         local card = getFromZone(actionSlot)
         if card and card.hasTag("Elusive") then
-            card.flip()
-            refreshCardSmooth(card,color)
+            table.insert(funcs,function(done) card.flip(); refreshCardSmoothAsync(card,color,done) end)
         end
     end
+
+    chain()
+        :parallel(funcs)
+        :complete(callback)
+        :run()
 end
 
 -- Guards & Witness Cards
-function disarm(color)
+function disarm(color, callback)
     local weaponSlot = getObjectFromGUID(WEAPON[color])
     local killSlot = getObjectFromGUID(KILL_SLOT[color])
 
-    discardZone(weaponSlot,color)
-    discardZone(killSlot,color)
+    chain()
+        :parallel({
+            function(done) discardZoneAsync(weaponSlot, color, done) end,
+            function(done) discardZoneAsync(killSlot, color, done) end
+        })
+        :complete(callback)
+        :run()
 end
 
-function callGuardsOn(color)
-    disarm(color)
-
-    local guardBag = getObjectFromGUID(GUARDBAG)
-    for i = 1, 4 do
-        local actionSlot = getObjectFromGUID(ACTION_SLOT[color][i])
-        Wait.time(function()
-            local guard = guardBag.takeObject()
-            guard.setPositionSmooth(actionSlot.getPosition())
-        end, 0.3*i)
-    end
+function callGuardsOn(color, callback)
+    chain()
+        :next(function(done) disarm(color, done) end)
+        :next(function(done)
+            local guardBag = getObjectFromGUID(GUARDBAG)
+            local guardFunctions = {}
+            
+            for i = 1, 4 do
+                local actionSlot = getObjectFromGUID(ACTION_SLOT[color][i])
+                table.insert(guardFunctions, function(guardDone)
+                    dealFromGuardBagAsync(guardBag, actionSlot, guardDone)
+                end)
+            end
+            
+            chain()
+                :parallel(guardFunctions, CARD_FLIP_DELAY)
+                :complete(done)
+                :run()
+        end)
+        :complete(callback)
+        :run()
 end
 
 function addCallYourShotContext()
@@ -461,8 +810,11 @@ function addCallYourShotContext()
             card.clearContextMenu()
             card.addContextMenuItem("Call your shot!", function(player_color)
                 local color = (player_color == "Red") and R or B
-                discardCardSmooth(card,color)
-                callGuardsOn(other(color)) end)
+                chain()
+                    :next(function(done) discardCardSmoothAsync(card, color, done) end)
+                    :next(function(done) callGuardsOn(other(color), done) end)
+                    :run()
+            end)
         end
     end
 end
@@ -479,9 +831,15 @@ function addDiscardContext(card)
         card.addContextMenuItem("Send to discard", function(player_color)
            local color = (player_color == "Red") and R or B
            local discardZone = getObjectFromGUID(DISCARD[other(color)])
-           card.flip()
-           Wait.time(function() card.setPosition(discardZone.getPosition()) end, 0.5)
-    end)
+           chain()
+               :next(function(done) flipCardAsync(card, done) end)
+               :next(function(done) 
+                   card.setPosition(discardZone.getPosition()) 
+                   done()
+               end)
+               :wait(CARD_TELE_DELAY)
+               :run()
+        end)
     end
 end
 
@@ -489,75 +847,22 @@ function addRefreshContext(card)
     card.addContextMenuItem("Send to refresh", function(player_color)
         local color = (player_color == "Red") and R or B
         local refreshZone = getObjectFromGUID(REFRESH[other(color)])
-        card.flip()
-        Wait.time(function() card.setPosition(refreshZone.getPosition()) end, 0.5)
+        chain()
+            :next(function(done) flipCardAsync(card, done) end)
+            :next(function(done)
+                card.setPosition(refreshZone.getPosition())
+                done()
+            end)
+            :wait(CARD_TELE_DELAY)
+            :run()
     end)
-end
-
----------------------------------------------------------------
--- ZONE MANAGEMENT
----------------------------------------------------------------
-
-function moveZoneToZone(zoneA,zoneB)
-    local obj = getFromZone(zoneA)
-    if not obj then return end
-    
-    obj.setPositionSmooth(zoneB.getPosition())
-end
-
-function dealZoneToZone(zoneA,zoneB,flip)
-    local obj = getFromZone(zoneA)
-    if not obj then return end
-    
-    local card
-    if obj.type == "Card" then card = obj end
-    if obj.type == "Deck" then card = obj.takeObject() end
-    
-    if flip then card.flip() end
-    
-    card.setPositionSmooth(zoneB.getPosition())
-end
-
-function shuffleZone(zone)
-    local obj = getFromZone(zone)
-    if not obj then return end
-
-    obj.shuffle()
-end
-
--- Discard Zone Operations
-function discardCard(card,color)
-    local discardZone = getObjectFromGUID(DISCARD[color])
-    card.setPosition(discardZone.getPosition())
-end
-
-function discardCardSmooth(card,color)
-    local discardZone = getObjectFromGUID(DISCARD[color])
-    card.setPositionSmooth(discardZone.getPosition())
-end
-
-function discardZone(zone,color)
-    local discard = getObjectFromGUID(DISCARD[color])
-    local obj = getFromZone(zone)
-    if obj then obj.setPositionSmooth(discard.getPosition()) end
-end
-
--- Refresh Zone Operations
-function refreshCard(card,color)
-    local refreshZone = getObjectFromGUID(REFRESH[color])
-    card.setPosition(refreshZone.getPosition())
-end
-
-function refreshCardSmooth(card,color)
-    local refreshZone = getObjectFromGUID(REFRESH[color])
-    card.setPositionSmooth(refreshZone.getPosition())
 end
 
 ---------------------------------------------------------------
 -- UI HELPERS
 ---------------------------------------------------------------
 
-function makeButton(obj,color,label,func)
+function makeButton(obj, color, label, func)
     obj.createButton(
         {click_function = func,
         label = label,
@@ -580,16 +885,16 @@ function getFromZone(zone)
     end
 end
 
-function checkZoneForTag(zone,tag)
+function checkZoneForTag(zone, tag)
     local obj = getFromZone(zone)
     if not obj then return false end
     
     return obj.hasTag(tag)
 end
 
-function checkZonesForTag(zones,tag)
+function checkZonesForTag(zones, tag)
     for _, zone in ipairs(zones) do
-        if checkZoneForTag(zone,tag) then
+        if checkZoneForTag(zone, tag) then
             return true
         end
     end
@@ -617,54 +922,3 @@ end
 function other(color)
     return 3-color
 end
-
----------------------------------------------------------------
--- CARD DATA
----------------------------------------------------------------
-
-local cardData = {
-    ["1 of Wands"] = {
-        class = "Weapon",
-        val = 1
-    },
-    ["2 of Wands"] = {
-        class = "Weapon",
-        val = 2
-    },
-    ["3 of Wands"] = {
-        class = "Weapon",
-        val = 3
-    },
-    ["4 of Wands"] = {
-        class = "Weapon",
-        val = 4
-    },
-    ["5 of Wands"] = {
-        class = "Weapon",
-        val = 5
-    },
-    ["6 of Wands"] = {
-        class = "Weapon",
-        val = 6
-    },
-    ["7 of Wands"] = {
-        class = "Weapon",
-        val = 7
-    },
-    ["8 of Wands"] = {
-        class = "Weapon",
-        val = 8
-    },
-    ["9 of Wands"] = {
-        class = "Weapon",
-        val = 9
-    },
-    ["10 of Wands"] = {
-        class = "Weapon",
-        val = 10
-    },
-    ["Strength"] = {
-        class = "Weapon",
-        val = 8
-    }
-}
