@@ -472,12 +472,17 @@ end
 ---------------------------------------------------------------
 
 function addDiscardContext(card)
-    card.addContextMenuItem("Send to discard", function(player_color)
-        local color = (player_color == "Red") and R or B
-        local discardZone = getObjectFromGUID(DISCARD[other(color)])
-        card.flip()
-        Wait.time(function() card.setPosition(discardZone.getPosition()) end, 0.5)
+    if not card then return end
+    if card.hasTag("Elusive") then
+        card.addContextMenuItem("Cannot discard!", function(_) end)
+    else
+        card.addContextMenuItem("Send to discard", function(player_color)
+           local color = (player_color == "Red") and R or B
+           local discardZone = getObjectFromGUID(DISCARD[other(color)])
+           card.flip()
+           Wait.time(function() card.setPosition(discardZone.getPosition()) end, 0.5)
     end)
+    end
 end
 
 function addRefreshContext(card)
