@@ -358,12 +358,15 @@ function dealHand(color, callback)
     
     local currentHandSize = #Player[playerColor].getHandObjects()
     local cardsToDraw = math.max(0, 4 - currentHandSize)
-    
+
+    local ch = chain()
     if deck and cardsToDraw > 0 then
-        deck.deal(cardsToDraw, playerColor)
+        ch
+            :next(function(done) deck.deal(cardsToDraw, playerColor); done() end)
+            :wait(CARD_MOVE_DELAY)
     end
 
-    chain()
+    ch
         :next(function(done)
             for _, card in ipairs(Player[playerColor].getHandObjects()) do
                 card.clearContextMenu()
@@ -495,7 +498,8 @@ function mixAndSendManipulationCards(color, callback)
         :next(function(done)
             local equipment = getFlippedEquipment(color)
             if equipment then
-                discardCardSmooth(equipment, color, done)
+                discardCardSmooth(equipment, color)
+                Wait.time(done, SHUFFLE_DELAY)
             else
                 shuffleZone(fourthSlotZone, done)
             end
