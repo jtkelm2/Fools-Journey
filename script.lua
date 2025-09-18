@@ -38,6 +38,7 @@ local ATK_COUNTER = {"fbcd06",""}
 
 -- Special IDs
 local GUARDBAG = "63b0e8"
+local PRIORITY_TRACKER = "38affd"
 
 -- Timing Constants
 local CARD_MOVE_DELAY = 1.8
@@ -212,8 +213,8 @@ function refreshCardSmooth(card, color, callback)
     Wait.time(callback or function() end, CARD_MOVE_DELAY)
 end
 
-function flipCard(card, callback)
-    card.flip()
+function flipAsync(obj, callback)
+    obj.flip()
     Wait.time(callback or function() end, CARD_FLIP_DELAY)
 end
 
@@ -296,6 +297,7 @@ end
 function refresh(color, callback)
     deactivateRunButton(color)
     checkHPMods(color)
+    switchPriority()
 
     chain()
         :next(function(done) returnElusivesFromActions(color, done) end)
@@ -307,6 +309,12 @@ function refresh(color, callback)
         })
         :complete(callback)
         :run()
+end
+
+function switchPriority()
+    local tracker = getObjectFromGUID(PRIORITY_TRACKER)
+    tracker.locked = false
+    flipAsync(tracker, function() tracker.locked = true end)
 end
 
 function shuffleRefreshPile(color, callback)
@@ -464,7 +472,7 @@ function flipManipulationCards(color, callback)
         local card = getFromZone(slotZone)
         if card then
             table.insert(flipFunctions, function(done)
-                flipCard(card, done)
+                flipAsync(card, done)
             end)
         end
     end
@@ -757,7 +765,7 @@ function returnElusivesFromHand(color, callback)
         if card.hasTag("Elusive") then
             table.insert(elusiveFunctions, function(done)
                 chain()
-                    :next(function(flipDone) flipCard(card, flipDone) end)
+                    :next(function(flipDone) flipAsync(card, flipDone) end)
                     :next(function(refreshDone) refreshCard(card, other(color), refreshDone) end)
                     :complete(done)
                     :run()
@@ -856,7 +864,7 @@ function addDiscardContext(card)
            local color = (player_color == "Red") and R or B
            local discardZone = getObjectFromGUID(DISCARD[other(color)])
            chain()
-               :next(function(done) flipCard(card, done) end)
+               :next(function(done) flipAsync(card, done) end)
                :next(function(done) 
                    card.setPosition(discardZone.getPosition()) 
                    done()
@@ -872,7 +880,7 @@ function addRefreshContext(card)
         local color = (player_color == "Red") and R or B
         local refreshZone = getObjectFromGUID(REFRESH[other(color)])
         chain()
-            :next(function(done) flipCard(card, done) end)
+            :next(function(done) flipAsync(card, done) end)
             :next(function(done)
                 card.setPosition(refreshZone.getPosition())
                 done()
