@@ -161,13 +161,14 @@ end
 -- ASYNC HELPER FUNCTIONS
 ---------------------------------------------------------------
 
-function moveZoneToZone(zoneA, zoneB, callback)
+function moveZoneToZone(zoneA, zoneB, flip, callback)
     local obj = getFromZone(zoneA)
     if not obj then
         if callback then callback() end
         return
     end
     
+    if flip then obj.flip() end
     obj.setPositionSmooth(zoneB.getPosition())
     Wait.time(callback or function() end, CARD_MOVE_DELAY)
 end
@@ -313,7 +314,7 @@ function shuffleRefreshPile(color, callback)
     local deckZone = getObjectFromGUID(DECK[color])
     
     chain()
-        :next(function(done) moveZoneToZone(refreshZone, deckZone, done) end)
+        :next(function(done) moveZoneToZone(refreshZone, deckZone, false, done) end)
         :next(function(done) shuffleZone(deckZone, done) end)
         :complete(callback)
         :run()
@@ -487,7 +488,7 @@ function mixAndSendManipulationCards(color, callback)
 
     chain()
         :parallel({
-            function(done) 
+            function(done)
                 local slotZone = getObjectFromGUID(MANIPULATION_SLOT[color][1])
                 dealZoneToZone(slotZone, fourthSlotZone, false, done)
             end,
@@ -515,7 +516,7 @@ function mixAndSendManipulationCards(color, callback)
                 end)
             end
             
-            table.insert(dealFunctions, function(dealDone) moveZoneToZone(fourthSlotZone, otherRefreshZone, dealDone) end)
+            table.insert(dealFunctions, function(dealDone) moveZoneToZone(fourthSlotZone, otherRefreshZone, false, dealDone) end)
 
             chain()
                 :parallel(dealFunctions, DEAL_SEQUENCE_DELAY)
@@ -562,7 +563,7 @@ function run(color, callback)
     for i = 1, 4 do
         local slotZone = getObjectFromGUID(ACTION_SLOT[color][i])
         table.insert(moveFunctions, function(done)
-            dealZoneToZone(slotZone, refreshZone, true, done)
+            moveZoneToZone(slotZone, refreshZone, true, done)
         end)
     end
     
@@ -701,7 +702,7 @@ function mixAndSendMiscCards(color, callback)
             
             chain()
                 :parallel(dealFunctions, DEAL_SEQUENCE_DELAY)
-                :next(function(moveDone) moveZoneToZone(fourthSlotZone, otherRefreshZone, moveDone) end)
+                :next(function(moveDone) moveZoneToZone(fourthSlotZone, otherRefreshZone, false, moveDone) end)
                 :next(function(actionDone) dealActions(other(color), 0, actionDone) end)
                 :complete(done)
                 :run()
