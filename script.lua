@@ -36,7 +36,6 @@ local ATK_COUNTER = {"fbcd06",""}
 
 -- Special Card IDs
 local GUARDBAG = "63b0e8"
-local WITNESS_CARDS = {"07cba6","2892ae"}
 
 -- Timing Constants
 local CARD_MOVE_DELAY = 1.8
@@ -810,17 +809,20 @@ function callGuardsOn(color, callback)
 end
 
 function addCallYourShotContext()
-    for _, cardId in ipairs(WITNESS_CARDS) do
-        local card = getObjectFromGUID(cardId)
-        if card then
-            card.clearContextMenu()
-            card.addContextMenuItem("Call your shot!", function(player_color)
-                local color = (player_color == "Red") and R or B
-                chain()
-                    :next(function(done) discardCardSmooth(card, color, done) end)
-                    :next(function(done) callGuardsOn(other(color), done) end)
-                    :run()
-            end)
+    for pcolor = 1, 2 do
+        for i = 1, 2 do
+            local zone = getObjectFromGUID(EQUIPMENT_SLOT[pcolor][i])
+            local card = getFromZone(zone)
+            if card and card.hasTag("Good") then
+                card.clearContextMenu()
+                card.addContextMenuItem("Call your shot!", function(player_color)
+                    local color = (player_color == "Red") and R or B
+                    chain()
+                        :next(function(done) discardCardSmooth(card, color, done) end)
+                        :next(function(done) callGuardsOn(other(color), done) end)
+                        :run()
+                end)
+            end
         end
     end
 end
