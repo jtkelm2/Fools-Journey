@@ -29,12 +29,14 @@ local MISC_SLOT = {{"e4cd71","254ac7","ca7b5e","8771a2"},{"037e0d","9f3b44","15a
 local EQUIPMENT_SLOT = {{"4b9aab","a9d81a"},{"f24971","1d6ff8"}}
 local WEAPON = {"88ba3b","502518"}
 local KILL_SLOT = {"a3159f","f90292"}
+local MOON_SLOT = {"ed4990","0b7baa"}
 
 -- Counter IDs
 local HP_COUNTER = {"66d824","2b0791"}
+local MOON_COUNTER = {"72f251","3e2bf5"}
 local ATK_COUNTER = {"fbcd06",""}
 
--- Special Card IDs
+-- Special IDs
 local GUARDBAG = "63b0e8"
 
 -- Timing Constants
@@ -292,7 +294,7 @@ end
 
 function refresh(color, callback)
     deactivateRunButton(color)
-    checkEmpress(color)
+    checkHPMods(color)
 
     chain()
         :next(function(done) returnElusivesFromActions(color, done) end)
@@ -712,16 +714,29 @@ end
 -- SPECIAL CARD MECHANICS
 ---------------------------------------------------------------
 
-function checkEmpress(color)
+function checkHPMods(color)
     local hpCounter = getObjectFromGUID(HP_COUNTER[color])
+    local curHP = hpCounter.Counter.getValue()
+
+    local moonCounter = getObjectFromGUID(MOON_COUNTER[color])
     
     local eqZones = {getObjectFromGUID(EQUIPMENT_SLOT[color][1]), getObjectFromGUID(EQUIPMENT_SLOT[color][2])}
-    local foundEmpress = checkZonesForTag(eqZones, "Empress")
-    
-    if foundEmpress and hpCounter.Counter.getValue() < 20 then
-        hpCounter.Counter.increment()
+    local moonZone = getObjectFromGUID(MOON_SLOT[color])
+
+    local hasEmpress = checkZonesForTag(eqZones, "Empress")
+    local hasCorruption = checkZonesForTag(eqZones, "Corruption")
+    local hasMoon = getFromZone(moonZone) -- checkZoneForTag(moonZone, "Moon")
+
+    if hasMoon then
+        moonCounter.Counter.setValue(curHP)
+    else
+        moonCounter.Counter.setValue(0)
     end
-end
+
+    local newHP = curHP + (hasEmpress and 1 or 0) * (hasCorruption and -1 or 1) + (hasCorruption and 6 or 0)
+    hpCounter.Counter.setValue(newHP)
+    if newHP > 20 then hpCounter.Counter.setValue(20) end
+end 
 
 function getFlippedEquipment(color)
     for i = 1, 2 do
